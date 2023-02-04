@@ -52,9 +52,10 @@ $countProcess = 0
 $report = $allRoleAssignments | ForEach-Object {
     $roleObject = $_
     $countProcess++
-    if($null -eq $roleObject.AssignmentType) {
+    if ($null -eq $roleObject.AssignmentType) {
         Write-Host "Processing eligible role assignment #$countProcess of $($allRoleAssignments.count)" -ForegroundColor Yellow
-    } else {
+    }
+    else {
         Write-Host "Processing active role assignment #$countProcess of $($allRoleAssignments.count)" -ForegroundColor Yellow
     }
 
@@ -69,20 +70,23 @@ $report = $allRoleAssignments | ForEach-Object {
     switch ($roleObject.Principal.AdditionalProperties.'@odata.type') {
         '#microsoft.graph.user' { 
             $principalSignInActivity = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/users/$($roleObject.Principal.Id)?`$select=id,userPrincipalName,userType,signInActivity"
-            if($principalSignInActivity) {
-                if($principalSignInActivity.signInActivity.lastSignInDateTime -gt $principalSignInActivity.signInActivity.lastNonInteractiveSignInDateTime) {
+            if ($principalSignInActivity) {
+                if ($principalSignInActivity.signInActivity.lastSignInDateTime -gt $principalSignInActivity.signInActivity.lastNonInteractiveSignInDateTime) {
                     $principalLastSignIn = $principalSignInActivity.signInActivity.lastSignInDateTime
-                } else { $principalLastSignIn = $principalSignInActivity.signInActivity.lastNonInteractiveSignInDateTime }
+                }
+                else {
+                    $principalLastSignIn = $principalSignInActivity.signInActivity.lastNonInteractiveSignInDateTime 
+                }
             }
 
             # Fetch admin account owner
-            if($roleObject.Principal.AdditionalProperties.userPrincipalName -like 'admin-*@*') {
-                $adminAccountOwnerAccountName = $roleObject.Principal.AdditionalProperties.userPrincipalName -replace "@tenant.onmicrosoft.com","" -replace "admin-",""
+            if ($roleObject.Principal.AdditionalProperties.userPrincipalName -like 'admin-*@*') {
+                $adminAccountOwnerAccountName = $roleObject.Principal.AdditionalProperties.userPrincipalName -replace "@tenant.onmicrosoft.com", "" -replace "admin-", ""
                 $adminAccountOwner = Get-MgUser -Filter "onPremisesSamAccountName eq '$($adminAccountOwnerAccountName)' and employeeId eq '$($roleObject.Principal.AdditionalProperties.employeeId)'" -ConsistencyLevel "eventual" -CountVariable counter -Select "id,userPrincipalName,displayName,onPremisesSamAccountName,employeeId,companyName,department,accountEnabled,signInActivity"
             }
 
             # Fetch default MFA method and cabability
-            if($mfaRegistrationDetailsHashmap.ContainsKey("$($roleObject.Principal.Id)")) {
+            if ($mfaRegistrationDetailsHashmap.ContainsKey("$($roleObject.Principal.Id)")) {
                 $mfaCapable = $mfaRegistrationDetailsHashmap["$($roleObject.Principal.Id)"].IsMfaCapable
                 $mfaDefaultMethod = $mfaRegistrationDetailsHashmap["$($roleObject.Principal.Id)"].AdditionalProperties.defaultMfaMethod
             }
@@ -119,7 +123,7 @@ $report = $allRoleAssignments | ForEach-Object {
 
     # Build report object
     [PSCustomObject]@{
-        'PIM-role last activated' = if($null -eq $roleObject.AssignmentType) {
+        'PIM-role last activated' = if ($null -eq $roleObject.AssignmentType) {
             switch ($roleObject.Principal.AdditionalProperties.'@odata.type') {
                 '#microsoft.graph.user' {
                     # KQL query for last PIM role activation
@@ -136,50 +140,81 @@ $report = $allRoleAssignments | ForEach-Object {
                     $kqlQuery.Results.TimeGenerated
                 }
             }
+        };
+
+        'Principal Type'          = switch ($roleObject.Principal.AdditionalProperties.'@odata.type') {
+            '#microsoft.graph.user' {
+                "User" 
+            }
+            '#microsoft.graph.servicePrincipal' {
+                $roleObject.Principal.AdditionalProperties.servicePrincipalType 
+            }
+            '#microsoft.graph.group' {
+                "RoleAssignableGroup" 
+            }
+        };
+        'Principal User Type'     = $principalSignInActivity.userType
+        'Principal Created'       = $roleObject.Principal.AdditionalProperties.createdDateTime
+        'Principal AD Synced'     = $roleObject.Principal.AdditionalProperties.onPremisesSyncEnabled -eq $true
+        'Principal Enabled'       = $roleObject.Principal.AdditionalProperties.accountEnabled
+        'Principal Last SignIn'   = $principalLastSignIn
+        'Principal DisplayName'   = $roleObject.Principal.AdditionalProperties.displayName
+        'Principal UPN / AppId'   = switch ($roleObject.Principal.AdditionalProperties.'@odata.type') {
+            '#microsoft.graph.user' {
+                $roleObject.Principal.AdditionalProperties.userPrincipalName 
+            }
+            '#microsoft.graph.servicePrincipal' {
+                $roleObject.Principal.AdditionalProperties.appId 
+            }
+            '#microsoft.graph.group' {
+                "" 
+            }
         }
-        'Principal Type' = switch ($roleObject.Principal.AdditionalProperties.'@odata.type') {
-            '#microsoft.graph.user' { "User" }
-            '#microsoft.graph.servicePrincipal' { $roleObject.Principal.AdditionalProperties.servicePrincipalType }
-            '#microsoft.graph.group' { "RoleAssignableGroup" }
-        }
-        'Principal User Type' = $principalSignInActivity.userType
-        'Principal Created' = $roleObject.Principal.AdditionalProperties.createdDateTime
-        'Principal AD Synced' = $roleObject.Principal.AdditionalProperties.onPremisesSyncEnabled -eq $true
-        'Principal Enabled' = $roleObject.Principal.AdditionalProperties.accountEnabled
-        'Principal Last SignIn' = $principalLastSignIn
-        'Principal DisplayName' = $roleObject.Principal.AdditionalProperties.displayName
-        'Principal UPN / AppId' = switch ($roleObject.Principal.AdditionalProperties.'@odata.type') {
-            '#microsoft.graph.user' { $roleObject.Principal.AdditionalProperties.userPrincipalName }
-            '#microsoft.graph.servicePrincipal' { $roleObject.Principal.AdditionalProperties.appId }
-            '#microsoft.graph.group' { "" }
-        }
-        'Principal Object ID' = $roleObject.Principal.Id
-        'Principal Owner' = if ($null -ne $roleObject.Principal.AdditionalProperties.appOwnerOrganizationId) {
+        'Principal Object ID'     = $roleObject.Principal.Id
+        'Principal Owner'         = if ($null -ne $roleObject.Principal.AdditionalProperties.appOwnerOrganizationId) {
             $graphResult = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/tenantRelationships/findTenantInformationByTenantId(tenantId='$($roleObject.Principal.AdditionalProperties.appOwnerOrganizationId)')"
             $graphResult.displayName + " ($($graphResult.defaultDomainName))"
+        };
+        'MFA Capable'             = $mfaCapable
+        'MFA Default Method'      = $mfaDefaultMethod
+        'Member Type'             = $roleObject.MemberType
+        'Assignment Type'         = if ($roleObject.AssignmentType) {
+            $roleObject.AssignmentType 
         }
-        'MFA Capable' = $mfaCapable
-        'MFA Default Method' = $mfaDefaultMethod
-        'Member Type' = $roleObject.MemberType
-        'Assignment Type' = if($roleObject.AssignmentType) { $roleObject.AssignmentType } else { "Eligible" }
-        'Directory Scope' = $roleObject.DirectoryScopeId
-        'Assigned Role' = $roleObject.roleDefinition.DisplayName
-        'Assignment Start Date' = if($roleObject.StartDateTime) { $roleObject.StartDateTime } elseif ($roleObject.scheduleInfo.startDateTime) { $roleObject.scheduleInfo.startDateTime }
-        'Assignment End Date' = if($roleObject.EndDateTime) { $roleObject.EndDateTime } elseif ($roleObject.scheduleInfo.expiration.endDateTime) { $roleObject.scheduleInfo.expiration.endDateTime }
-        'Has End Date' = $roleObject.EndDateTime -or $roleObject.scheduleInfo.expiration.endDateTime
-        'Custom Role' = -not $roleObject.RoleDefinition.IsBuiltIn
-        'Role Template' = $roleObject.RoleDefinition.TemplateId
-        'AdminOwner Company' = $adminAccountOwner.CompanyName
-        'AdminOwner Department' = $adminAccountOwner.Department
-        'AdminOwner Name' = $adminAccountOwner.DisplayName
-        'AdminOwner UPN' = $adminAccountOwner.UserPrincipalName
-        'AdminOwner Signature' = $adminAccountOwner.OnPremisesSamAccountName
-        'AdminOwner EmployeeId' = $adminAccountOwner.EmployeeId
-        'AdminOwner Enabled' = $adminAccountOwner.AccountEnabled
-        'AdminOwner LastSignIn' = if($adminAccountOwner.SignInActivity) {
-            if($adminAccountOwner.SignInActivity.lastSignInDateTime -gt $adminAccountOwner.SignInActivity.lastNonInteractiveSignInDateTime) {
+        else {
+            "Eligible" 
+        }
+        'Directory Scope'         = $roleObject.DirectoryScopeId
+        'Assigned Role'           = $roleObject.roleDefinition.DisplayName
+        'Assignment Start Date'   = if ($roleObject.StartDateTime) {
+            $roleObject.StartDateTime 
+        }
+        elseif ($roleObject.scheduleInfo.startDateTime) {
+            $roleObject.scheduleInfo.startDateTime 
+        };
+        'Assignment End Date'     = if ($roleObject.EndDateTime) {
+            $roleObject.EndDateTime 
+        }
+        elseif ($roleObject.scheduleInfo.expiration.endDateTime) {
+            $roleObject.scheduleInfo.expiration.endDateTime 
+        }
+        ; 'Has End Date'          = $roleObject.EndDateTime -or $roleObject.scheduleInfo.expiration.endDateTime
+        'Custom Role'             = -not $roleObject.RoleDefinition.IsBuiltIn
+        'Role Template'           = $roleObject.RoleDefinition.TemplateId
+        'AdminOwner Company'      = $adminAccountOwner.CompanyName
+        'AdminOwner Department'   = $adminAccountOwner.Department
+        'AdminOwner Name'         = $adminAccountOwner.DisplayName
+        'AdminOwner UPN'          = $adminAccountOwner.UserPrincipalName
+        'AdminOwner Signature'    = $adminAccountOwner.OnPremisesSamAccountName
+        'AdminOwner EmployeeId'   = $adminAccountOwner.EmployeeId
+        'AdminOwner Enabled'      = $adminAccountOwner.AccountEnabled
+        'AdminOwner LastSignIn'   = if ($adminAccountOwner.SignInActivity) {
+            if ($adminAccountOwner.SignInActivity.lastSignInDateTime -gt $adminAccountOwner.SignInActivity.lastNonInteractiveSignInDateTime) {
                 $adminAccountOwner.SignInActivity.lastSignInDateTime
-            } else { $adminAccountOwner.SignInActivity.lastNonInteractiveSignInDateTime }
+            }
+            else {
+                $adminAccountOwner.SignInActivity.lastNonInteractiveSignInDateTime 
+            }
         }
     }
 }
