@@ -76,6 +76,27 @@ $cacheServicePrincipalsWithoutSigninActivities = @()
         $currentServicePrincipalObject = Get-MgServicePrincipal -ServicePrincipalId $currentAppRoleAssignedTo.PrincipalId
         $cacheServicePrincipalObjects += $currentServicePrincipalObject
         Write-Host "Added servicePrincipal object to cache: $($currentServicePrincipalObject.displayName)"
+        $currentServicePrincipalOwner = New-Object System.Collections.ArrayList
+       
+
+        # If Service Principal have list of owners , retrieve the object from Ms Graph and add to cache
+       
+
+        Get-MgServicePrincipalOwner -ServicePrincipalId $currentAppRoleAssignedTo.PrincipalId | ForEach-Object {
+            $currentOwnerId = $_.Id
+            
+            if($currentOwnerId -notin $cacheServicePrincipalOwnerObjects.Id)
+            {  $currentServicePrincipalOwnerElement = Get-MgUser -UserId $currentOwnerId
+                $currentServicePrincipalOwner.Add( $currentServicePrincipalOwnerElement) | Out-Null
+                $cacheServicePrincipalOwnerObjects.Add($currentServicePrincipalOwnerElement) | Out-Null 
+                
+                Write-Host "Added servicePrincipal Owner to cache: $($currentServicePrincipalOwnerElement.DisplayName) "
+            }
+            else {
+                $currentServicePrincipalOwner.Add( $($cacheServicePrincipalOwnerObjects | Where-Object { $_.Id -eq $currentOwnerId } )) | Out-Null 
+            }
+            
+        }
     }
 
     # Lookup app owner organization
@@ -118,6 +139,13 @@ $cacheServicePrincipalsWithoutSigninActivities = @()
         }
     }
 
+    
+
+    
+
+
+
+
     # Create reporting object
     [PSCustomObject]@{
         ServicePrincipalDisplayName = $currentServicePrincipalObject.DisplayName
@@ -129,6 +157,7 @@ $cacheServicePrincipalsWithoutSigninActivities = @()
         AppOwnerOrganizationTenantId = $currentServicePrincipalObject.AppOwnerOrganizationId
         AppOwnerOrganizationTenantName = $currentAppOwnerOrgObject.DisplayName
         AppOwnerOrganizationTenantDomain = $currentAppOwnerOrgObject.DefaultDomainName
+        AppOwnerDisplayname = $(($currentServicePrincipalOwner | ForEach-Object { $_.DisplayName }) -join ", ")
         Resource = $currentAppRoleAssignedTo.ResourceDisplayName
         AppRole = $currentAppRole.Value
         AppRoleTier = $appRoleTiers["$($currentAppRole.Value)"]
@@ -140,9 +169,9 @@ $cacheServicePrincipalsWithoutSigninActivities = @()
         DelegatedResourceSignInActivity = $currentSpSigninActivity.DelegatedResourceSignInActivity.LastSignInDateTime
         ApplicationAuthenticationClientSignInActivity = $currentSpSigninActivity.ApplicationAuthenticationClientSignInActivity.LastSignInDateTime
         ApplicationAuthenticationResourceSignInActivity = $currentSpSigninActivity.ApplicationAuthenticationResourceSignInActivity.LastSignInDateTime
+
     }
 }
 
 $msGraphAppRoleAssignedToReport | Out-GridView
 
-### End of script
